@@ -194,13 +194,13 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 		tableOffset = ftell f,
 		bufferOffset = readlong f + tableOffset,
 		bufferCount = readlong f,
-		ukw = readbyte f,				--1
+		ukw = readbyte f,					--1
 		bufferStride = readbyte f,
-		vertDecCount = readbyte f,			--5
-		ukw4 = readbyte f,			--1
+		vertDecCount = readbyte f,	--5
+		ukw4 = readbyte f,				--1
 		vertDecOffset = readlong f + tableOffset,
 		null = readlong f,
-		bufferType = readlong f,		--1=vertices, 2=faces
+		bufferType = readlong f,			--1=vertices, 2=faces
 		null2 = readlong f,
 		null3 = readlong f
 	)
@@ -254,7 +254,7 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 	for x=1 to sectionTableArray.count do (
 		section = sectionTableArray[x]
 		fseek f section.offset #seek_set
-		format "% %\n" x section.count
+		format "sectionId:% sectionCount:% sectionOffset: %\n" x (bit.intashex(section.count)) (bit.intashex(section.offset))
 		case x of (
 			1:(--skeleton
 				for y=1 to section.count do (
@@ -316,7 +316,7 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 				model.materialOffset = ftell f
 				model.materialCount = section.count
 				model.materialInfoArray = for y=1 to section.count collect (
-					ReadFixedByteString f 0x50 1 0
+					ReadFixedByteString f 0x50 1 1
 					materialInfo = _materialInfo()
 				)
 			)
@@ -343,18 +343,18 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 	fseek f matNamesOffset #seek_set
 	matNameArray = for x=1 to 1 collect (matName = (getName f (readlong f + matNamesOffset)))	--im gonna asume one of the section counts is the actual material count, prob 6
 	
-	multiMat = MultiMaterial numsubs:model.materialCount showInViewport:true name:matNameArray[1]
-	meditMaterials[1] = multiMat
-	for x=1 to multiMat.count do (		
-		texPath = FilePath + texNameArray[model.materialInfoArray[x].texId]
-		if DoesFileExist texPath == true then (
-			multiMat[x].diffuseMap = Bitmaptexture filename:texPath
-			multiMat[x].showinviewport = true
-		)
-		else (
-			multiMat[x].Diffuse = random black white
-		)
-	)
+-- 	multiMat = MultiMaterial numsubs:model.materialCount showInViewport:true name:matNameArray[1]
+-- 	meditMaterials[1] = multiMat
+-- 	for x=1 to multiMat.count do (		
+-- 		texPath = FilePath + texNameArray[model.materialInfoArray[x].texId]
+-- 		if DoesFileExist texPath == true then (
+-- 			multiMat[x].diffuseMap = Bitmaptexture filename:texPath
+-- 			multiMat[x].showinviewport = true
+-- 		)
+-- 		else (
+-- 			multiMat[x].Diffuse = random black white
+-- 		)
+-- 	)
 	
 	format "boneCount: %\n" model.tfmArray.count
 	format "meshCount: %\n" model.meshCount
@@ -374,7 +374,7 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 		newBone.width = 0.1
 		newBone.height = 0.1
 		newBone.wirecolor = white
-		newbone.showlinks = false
+		newbone.showlinks = true
 		newBone.transform = tfm
 		newBone.pos *= fscale
 		
@@ -398,7 +398,8 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 	for b in BNArr do b.setskinpose()
 	--print BNArr
 	
-	boneMapOffset = model.boneMapOffset
+	boneMapArray = #()
+	currBoneMapOffset = model.boneMapOffset
 	for x=1 to model.meshCount do (	-- model.meshCount
 		Vert_Array=#()
 		UV_Array=#()
@@ -409,16 +410,44 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 		Weight_Array=#()
 		
 		fseek f (model.meshInfoOffset + (x-1) * 0x60) #seek_set
-		ReadFixedByteString f 0x60 1 0
+		ReadFixedByteString f 0x60 1 1
 		meshInfo = _meshInfo()
-		print meshInfo
+-- 		print meshInfo
 		
-		fseek f boneMapOffset #seek_set
-		boneMap = for y=1 to meshInfo.boneMapCount collect (readshort f#unsigned + 1)
-		if model.boneMapCount > 1 then (
-			boneMapOffset = ftell f
-			model.boneMapCount -= 1
+		
+-- 		printhex meshInfo.boneMapCount
+-- 	
+-- 		currBoneMapOffset = ftell f
+		
+		fseek f currBoneMapOffset #seek_set
+		printhere f
+		
+		
+		
+		if model.boneMapCount >= 1 do (
+			-- if previous bonemap has same count then go back to the same offset as last one
+			if x >= 2 then (
+				printhex meshInfo.boneMapCount
+				printhex boneMapArray[x-1].count
+				
+				if meshInfo.boneMapCount == boneMapArray[x-1].count do (
+					fseek f -(2 * boneMapArray[x-1].count) #seek_cur
+					currBoneMapOffset = ftell f
+					printhere f
+				)
+			)
+-- 			else (
+-- 				currBoneMapOffset = ftell f
+-- 			)
+			boneMap = for y=1 to meshInfo.boneMapCount collect (readshort f#unsigned + 1)
+			append boneMapArray boneMap
 		)
+		
+		
+-- 		printhere f
+		
+		
+		currBoneMapOffset = ftell f
 		
 		fseek f (model.bufferInfoOffset + ((x*2-2) * 0x20)) #seek_set
 		ReadFixedByteString f 0x20 1 0
@@ -537,12 +566,13 @@ If (fname!=undefined) and ((DoesFileExist fname)==true) then (--)
 		msh = mesh vertices:Vert_Array faces:Face_Array materialIDs:MatId_Array
 		msh.numTVerts = UV_Array.count
 		msh.name = (x as string) + "_" + (bit.intashex(vertInfo.bufferStride as integer)) as string
-		msh.material = multiMat
+-- 		msh.material = multiMat
 		buildTVFaces msh
 		for j = 1 to UV_Array.count do setTVert msh j UV_Array[j]
 		for j = 1 to Face_Array.count do setTVFace msh j Face_Array[j]
 		for j = 1 to Normal_Array.count do setNormal msh j Normal_Array[j]
 		msh.transform =  (matrix3 [1,0,0] [0,0,1] [0,-1,0] [0,0,0])
+		
 		
 		max modify mode
 		select msh
