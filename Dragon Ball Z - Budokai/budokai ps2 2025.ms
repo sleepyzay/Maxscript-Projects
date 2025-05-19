@@ -214,6 +214,7 @@ fn BuildFaces VertCount FaceType &Face_Array= (
 )
 
 fname = GetOpenFileName caption:"Budokai PS2" types:"All Known Formats|*.amo;*.bin|Model (*.amo)|*.amo"
+-- fname = @"C:\Users\Xavier\Downloads\Budokai Models\Budokai Models\277. Gogeta (Default) - SSJ.amo"
 -- fname = @"C:\Users\Xaxa\Downloads\Budokai Models\B3GHC Exclusive Models\160a. Cell Jr. (Default).amo"
 -- fname = @"C:\Users\Xavier\Downloads\Budokai Models\Budokai Models\B3GHC Exclusive Models\160a. Cell Jr. (Default).amo"
 -- fname = @"C:\Users\Xavier\Desktop\New folder (4)\New folder\unnamed_488_010.amo"
@@ -243,7 +244,6 @@ amgOffsetTable = readlong f
 boneDataCount = readlong f			-- how many possible amg data tables to associate with a bone
 boneNameOffset = readlong f
 
-format "boneCount: %\n" boneCount
 struct _boneDataTable (
 	boneID = readlong f,
 	boneDataOffset = readlong f,
@@ -362,13 +362,16 @@ fseek f boneNameOffset #seek_set
 boneNameList = for x=1 to boneCount collect (ReadFixedString f 0x20)
 -- print boneNameList
 
+format "boneCount: %\n" (bit.intashex(boneCount))
+
 BNArr = #()
 buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList BNArr
-for x=1 to BNArr.count do format "% %\n" (x-1) BNArr[x].name
+for x=1 to BNArr.count do format "%	%\n" (bit.intashex(x-1)) BNArr[x].name
 
 Mesh_Array = #()
-vertOffsetReferenceArray=#()
 Weight_Array=#()
+vertOffsetReferenceArray=#()
+
 
 multiMat = MultiMaterial numsubs:0 showInViewport:true
 meditMaterials[1] = multiMat
@@ -377,8 +380,7 @@ vertType1 = #()
 vertType2 = #()
 
 format "amg count: %\n" (bit.intashex(amgCount))
-k = 7
-for x=1 to amgCount do (	--amgCount
+for x=1 to 1 do (	--amgCount
 	fseek f amgOffset[x] #seek_set
 	ReadFixedByteString f 0x20 1 0
 	
@@ -391,6 +393,8 @@ for x=1 to amgCount do (	--amgCount
 	amgBoneOffset = readlong f + amgOffset[x]
 	amgMatCount = readlong f
 	amgBoneNameOffset = readlong f + amgOffset[x]
+	
+	format "amg: %		amgBoneCount: %\n" (bit.intashex(x)) (bit.intashex(amgBoneCount))
 	
 	fseek f amgBoneNameOffset #seek_set
 	amgBoneNameList = for x=1 to amgBoneCount collect (ReadFixedString f 0x20)
@@ -408,7 +412,6 @@ for x=1 to amgCount do (	--amgCount
 -- 			multiMat[y].name = y as string
 -- 		)
 -- 	)
-	
 	for y=1 to amgBoneCount do (	--amgBoneCount
 		fseek f amgDataTableList[y].dataOffset #seek_set
 		-- amgDataTables either have modelData + matrixData or weightData
@@ -438,6 +441,7 @@ for x=1 to amgCount do (	--amgCount
 			
 			fseek f meshOffsetTable #seek_set
 			meshOffsetList = for z=1 to meshCount collect (readlong f + modelDataOffset)
+			
 			for z=1 to meshCount do (	--meshCount
 				fseek f meshOffsetList[z] #seek_set
 				
@@ -607,16 +611,125 @@ for x=1 to amgCount do (	--amgCount
 -- 			setCVertMode msh true
 			for j = 1 to UV_array.count do setTVert msh j UV_array[j]
 			for j = 1 to Face_array.count do setTVFace msh j Face_array[j]
-			for j = 1 to Normal_Array.count do setNormal msh j Normal_Array[j]
+-- 			for j = 1 to Normal_Array.count do setNormal msh j Normal_Array[j]
 			for j = 1 to Color_array.count do setVertColor msh j Color_array[j]
 			
 			transformBoneId = getTransformBoneId boneDataArray boneId
 			msh.parent = BNArr[transformBoneId]
 			msh.transform = msh.parent.transform
+			
+			append Mesh_Array msh	-- a way to access the first mesh so that I can update it's skinning info
+		)
+		
+		fseek f weightDataOffset #seek_set
+		if weightDataOffset > amgOffset[x] do (
+			fseek f 0x0c #seek_cur
+			weightTableCount = readlong f
+			for z=1 to weightTableCount do (
+-- 				ReadFixedByteString f 0x20 1 1
+				
+				weight = readfloat f
+				weightVertCount = readlong f
+				weightVertOffset = readlong f + amgOffset[x]
+				weightVertCount2 = readlong f
+				weightVertOffset2 = readlong f + amgOffset[x]
+				fseek f 0x0c #seek_cur	--null
+				
+				boneId2 = (finditem BNArr BNArr[boneID].parent)
+				weight2 = 1.0 - weight
+				
+				backJump = ftell f
+				
+				fseek f weightVertOffset #seek_set
+				if weightVertOffset > amgOffset[x] do (
+					for i=1 to weightVertCount do (
+-- 						ReadFixedByteString f 0x20 1 1
+						
+						ux = readfloat f				-- for collision?
+						uy = readfloat f
+						uz = readfloat f
+						vertOffset = readlong f
+						ux2 = readfloat f
+						uy2 = readfloat f
+						uz2 = readfloat f
+						null = readlong f
+						
+-- 						b = sphere()
+-- 						b.pos = [ux,uy,uz] * fscale
+-- 						b.radius = 1
+-- 						b.wirecolor = red
+-- 						
+-- 						c = sphere()
+-- 						c.pos = ([ux,uy,uz] + [ux2,uy2,uz2]) * fscale
+-- 						c.radius = 1
+-- 						c.wirecolor = green
+-- 						
+-- 						transformBoneId = getTransformBoneId boneDataArray boneId
+-- 						b.transform *= BNArr[transformBoneId].transform
+-- 						c.transform *= BNArr[transformBoneId].transform
+						
+						Weight_Array[finditem vertOffsetReferenceArray (vertOffset+amgOffset[x])] = #(#(boneId, boneId2), #(weight, weight2))
+					)
+				)
+				
+				fseek f weightVertOffset2 #seek_set
+				if weightVertOffset2 > amgOffset[x] do (	-- only for mouth and hair?
+					for i=1 to weightVertCount2 do (
+-- 						ReadFixedByteString f 0x10 0 1
+						
+						ux = readfloat f				-- for collision?
+						uy = readfloat f
+						uz = readfloat f
+						vertOffset = readlong f
+						
+-- 						b = sphere()
+-- 						b.pos = [ux,uy,uz] * fscale
+-- 						b.radius = 0.1
+-- 						b.wirecolor = red
+-- 						
+-- 						transformBoneId = getTransformBoneId boneDataArray boneId
+-- 						b.transform *= BNArr[transformBoneId].transform
+-- 						selectmore b
+-- 						
+						Weight_Array[finditem vertOffsetReferenceArray (vertOffset+amgOffset[x])] = #(#(boneId, boneId2), #(weight, weight2))
+					)
+				)
+				fseek f backJump #seek_set
+			)
+		)
+		
+		fseek f matrixDataOffset #seek_set
+		if matrixDataOffset > amgOffset[x] do (
+			ReadFixedByteString f 0x40 0 0
 		)
 	)
 )
-print k
+
+if Weight_Array.count != 0 do (
+	-- Applying Skinning --
+	max modify mode
+	select Mesh_Array[1]
+	skinMod = skin ()
+	addModifier Mesh_Array[1] skinMod
+	for i = 1 to BNArr.count do (
+		maxbone = getnodebyname boneNameList[i]
+		if i != BNArr.count then
+			skinOps.addBone skinMod maxbone 0
+		else
+			skinOps.addBone skinMod maxbone -1
+	)
+	-- Applying Weights --
+	modPanel.setCurrentObject skinMod
+	for i = 1 to Weight_Array.count do (
+		w = Weight_Array[i]
+		
+		--format "% % %\n" (i-1) w[1] w[2] 
+		
+	-- 	skinOps.ReplaceVertexWeights skinMod i w[1] w[2]
+		skinOps.SetVertexWeights skinMod i w[1] w[2]
+	-- 	print (skinOps.GetVertexWeight skinMod i 1)
+	)
+)
 Print ("Last Read @ "+((bit.intAsHex(ftell f as integer))as string))
 )
 gc()
