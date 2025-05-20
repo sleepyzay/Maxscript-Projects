@@ -213,7 +213,8 @@ fn BuildFaces VertCount FaceType &Face_Array= (
 	)
 )
 
-fname = GetOpenFileName caption:"Budokai PS2" types:"All Known Formats|*.amo;*.bin|Model (*.amo)|*.amo"
+-- fname = GetOpenFileName caption:"Budokai PS2" types:"All Known Formats|*.amo;*.bin|Model (*.amo)|*.amo"
+fname = @"C:\Users\Xavier\Downloads\Budokai Models\Budokai Models\074. Android 16 (Default).amo"
 -- fname = @"C:\Users\Xavier\Downloads\Budokai Models\Budokai Models\277. Gogeta (Default) - SSJ.amo"
 -- fname = @"C:\Users\Xaxa\Downloads\Budokai Models\B3GHC Exclusive Models\160a. Cell Jr. (Default).amo"
 -- fname = @"C:\Users\Xavier\Downloads\Budokai Models\Budokai Models\B3GHC Exclusive Models\160a. Cell Jr. (Default).amo"
@@ -233,30 +234,19 @@ print (FileName + FileExtension) as string
 Print "===================================="
 --)
 
-amoOffset = ftell f
-amo = ReadFixedString f 4
-headerLength = readlong f
-null = readlonglong f
-boneCount = readlong f
-boneDataTableOffset = readlong f
-amgCount = readlong f
-amgOffsetTable = readlong f 
-boneDataCount = readlong f			-- how many possible amg data tables to associate with a bone
-boneNameOffset = readlong f
-
-struct _boneDataTable (
+struct _boneData (
 	boneID = readlong f,
-	boneDataOffset = readlong f,
-	childTableOffset = readlong f,	--pointer to another element of _boneDataTable relative to amo
+	groupDataOffset = readlong f,
+	childTableOffset = readlong f,		--pointer to another element of _boneData relative to amo
 	siblingTableOffset = readlong f,	--same as above
 	parentTableOffset = readlong f,	--same as above
 	null = (fseek f 0x0c #seek_cur)
 )
 
-struct _boneData (	--0x13 of these per bone
-	amgID = readlong f + 1,
-	boneID = readlong f + 1,
-	matrixOffset = readlong f,
+struct _groupData (				-- L_XX / up to 0x13 of these per bone
+	amgId = readlong f + 1,
+	boneId = readlong f + 1,	-- can exceed amo's defined boneCount
+	amgDataOffset = readlong f,	-- pointer to a specific matrix inside of amg number amgId
 	null = readlong f
 )
 
@@ -271,13 +261,12 @@ struct _amgDataTable (
 
     -- Constructor
     fn init f amgOffset = (
--- 		ReadFixedByteString f 0x50 1 1
-		
 		c11 = readfloat f; c12 = readfloat f; c13 = readfloat f; c14 = readfloat f
 		c21 = readfloat f; c22 = readfloat f; c23 = readfloat f; c24 = readfloat f 
 		c31 = readfloat f; c32 = readfloat f; c33 = readfloat f; c34 = readfloat f
 		tfm = inverse (quat c11 c12 c13 c14) as matrix3
 		tfm.row4 = ([c21,c22,c23]*fscale)
+		
 		ukw = readshort f
 		ukw2 = readshort f
 		dataOffset = readlong f + amgOffset
@@ -290,26 +279,25 @@ struct _amgDataTable (
     )
 )
 
-fn buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList &BNArr= (
-	x = 0
-	for boneData in boneDataTableArray do (
-		x += 1
+fn buildSkeleton boneDataArray boneDataOffset groupCount boneNameArray &BNArr= (
+	for x = 1 to boneDataArray.count do (
+		boneData = boneDataArray[x]
+		
 		boneId = boneData.boneId + 1
-		childId = (if boneData.childTableOffset > 0 then ((boneData.childTableOffset + amoOffset) -  boneDataTableOffset) as integer / 0x20 + 1 else 0)
-		siblingId = (if boneData.siblingTableOffset > 0 then ((boneData.siblingTableOffset + amoOffset) -  boneDataTableOffset) as integer / 0x20 + 1 else 0)
-		parentId = (if boneData.parentTableOffset > 0 then ((boneData.parentTableOffset + amoOffset) -  boneDataTableOffset) as integer / 0x20 + 1 else 0)
+		childId = (if boneData.childTableOffset > 0 then (boneData.childTableOffset -  boneDataOffset) as integer / 0x20 + 1 else 0)
+		siblingId = (if boneData.siblingTableOffset > 0 then (boneData.siblingTableOffset -  boneDataOffset) as integer / 0x20 + 1 else 0)
+		parentId = (if boneData.parentTableOffset > 0 then (boneData.parentTableOffset -  boneDataOffset) as integer / 0x20 + 1 else 0)
 -- 		format "% % % %\n" boneId childId siblingId parentId
-
-		fseek f (fseek f (boneData.boneDataOffset + 8) #seek_set; readlong f) #seek_set
+		
+		fseek f boneData.groupDataOffset #seek_set
+		groupDataArray = for y=1 to groupCount collect (groupData = _groupData())
+		
+		fseek f groupDataArray[1].amgDataOffset #seek_set
 		c11 = readfloat f; c12 = readfloat f; c13 = readfloat f; c14 = readfloat f
 		c21 = readfloat f; c22 = readfloat f; c23 = readfloat f; c24 = readfloat f 
 		c31 = readfloat f; c32 = readfloat f; c33 = readfloat f; c34 = readfloat f
 		tfm = inverse (quat c11 c12 c13 c14) as matrix3
 		tfm.row4 = ([c21,c22,c23]*fscale)
-		
-		if (parentID != 0) do (
-			tfm *= BNArr[parentID].objecttransform	
-		)
 		
 		newBone = bonesys.createbone	\
 		tfm.row4	\
@@ -320,12 +308,13 @@ fn buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList &
 		newBone.transform = tfm
 		newBone.setBoneEnable false 0
 		newBone.wirecolor = orange
-	 	newbone.name = boneNameList[x]
+	 	newbone.name = boneNameArray[x]
 		newbone.showlinks = true
 		newBone.pos.controller      = TCB_position ()
 		newBone.rotation.controller = TCB_rotation ()
 
-		if (parentID != 0) then(
+		if parentID != 0 do (
+			newBone.transform *= BNArr[parentID].objecttransform
 			newBone.parent = BNArr[parentID]
 		)
 		append BNArr newBone
@@ -337,21 +326,32 @@ fn buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList &
 	for b in BNArr do b.setskinpose()
 )
 
-fn getTransformBoneId boneDataArray boneId = (
-	for i=1 to boneDataArray.count do (
-		for j=1 to boneDataArray[i].count do (
-			if boneDataArray[i][j].boneID == boneID do return i
+fn getTransformBoneId groupDataArray boneId = (
+	for i=1 to groupDataArray.count do (
+		for j=1 to groupDataArray[i].count do (
+			if groupDataArray[i][j].boneID == boneID do return i
 		)
 	)
 )
 
-fseek f boneDataTableOffset #seek_set
-boneDataTableArray = for x=1 to boneCount collect (ReadFixedByteString f 0x20 1 0; table = _boneDataTable())
+amoOffset = ftell f
+amo = ReadFixedString f 4
+headerLength = readlong f
+null = readlonglong f
+boneCount = readlong f
+boneDataOffset = readlong f
+amgCount = readlong f
+amgOffsetTable = readlong f 
+groupCount = readlong f			-- how many possible amg data tables to associate with a bone
+boneNameOffset = readlong f
+
+fseek f boneDataOffset #seek_set
+boneDataArray = for x=1 to boneCount collect (ReadFixedByteString f 0x20 1 0; table = _boneData())
 	
-boneDataArray = #()
-for boneDataTable in boneDataTableArray do (
-	fseek f boneDataTable.boneDataOffset #seek_set
-	append boneDataArray (for x=1 to boneDataCount collect (ReadFixedByteString f 0x10 1 0 ; boneData = _boneData()))
+groupDataArray = #()
+for boneDataTable in boneDataArray do (
+	fseek f boneDataTable.groupDataOffset #seek_set
+	append groupDataArray (for x=1 to groupCount collect (ReadFixedByteString f 0x10 1 0 ; groupData = _groupData()))
 -- 	format "\n"
 )
 
@@ -359,13 +359,13 @@ fseek f amgOffsetTable #seek_set
 amgOffset = for x=1 to amgCount collect (readlong f)
 	
 fseek f boneNameOffset #seek_set
-boneNameList = for x=1 to boneCount collect (ReadFixedString f 0x20)
--- print boneNameList
+boneNameArray = for x=1 to boneCount collect (ReadFixedString f 0x20)
+-- print boneNameArray
 
 format "boneCount: %\n" (bit.intashex(boneCount))
 
 BNArr = #()
-buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList BNArr
+buildSkeleton boneDataArray boneDataOffset groupCount boneNameArray BNArr
 for x=1 to BNArr.count do format "%	%\n" (bit.intashex(x-1)) BNArr[x].name
 
 Mesh_Array = #()
@@ -376,11 +376,8 @@ vertOffsetReferenceArray=#()
 multiMat = MultiMaterial numsubs:0 showInViewport:true
 meditMaterials[1] = multiMat
 
-vertType1 = #()
-vertType2 = #()
-
 format "amg count: %\n" (bit.intashex(amgCount))
-for x=1 to 1 do (	--amgCount
+for x=1 to amgCount do (	--amgCount
 	fseek f amgOffset[x] #seek_set
 	ReadFixedByteString f 0x20 1 0
 	
@@ -394,7 +391,7 @@ for x=1 to 1 do (	--amgCount
 	amgMatCount = readlong f
 	amgBoneNameOffset = readlong f + amgOffset[x]
 	
-	format "amg: %		amgBoneCount: %\n" (bit.intashex(x)) (bit.intashex(amgBoneCount))
+-- 	format "amg: %		amgBoneCount: %\n" (bit.intashex(x)) (bit.intashex(amgBoneCount))
 	
 	fseek f amgBoneNameOffset #seek_set
 	amgBoneNameList = for x=1 to amgBoneCount collect (ReadFixedString f 0x20)
@@ -453,6 +450,8 @@ for x=1 to 1 do (	--amgCount
 				texId2 = readlong f + 1		--color ramp texture
 				fseek f 0x30 #seek_cur		--material info?
 				
+-- 				format "%	%\n" texId texId2
+				
 				baseOffset = ftell f
 				fseek f 0x50 #seek_cur		--unknownData / always the same
 				
@@ -494,7 +493,27 @@ for x=1 to 1 do (	--amgCount
 								append Normal_array[0,0,0]
 								append Color_Array( white)
 							)
-							else if vertexFlags[5] == 0xbd then (		
+							else if vertexFlags[5] == 0x36 or vertexFlags[5] == 0xb6 then (		
+-- 								if vertexFlags[5] == 0xb6 do ReadFixedByteString f 0x30 1 1
+								
+								vx = readfloat f
+								vy = readfloat f
+								vz = readfloat f
+								f1 = readfloat f
+								cr = readfloat f * 255.0
+								cg = readfloat f * 255.0
+								cb = readfloat f * 255.0
+								ca = readfloat f * 255.0
+								tu = readfloat f
+								tv = readfloat f
+								f3 = readfloat f
+								null = readfloat f								
+								
+								append Vert_Array([vx,vy,vz]*fscale)
+								append UV_Array([tu,-tv,0])
+								append Color_Array(color cr cg cb ca)
+							)
+							else if vertexFlags[5] == 0xbd then (	
 -- 								if vertexFlags[5] == 0xb6 do ReadFixedByteString f 0x30 1 1
 								
 								vx = readfloat f
@@ -513,10 +532,10 @@ for x=1 to 1 do (	--amgCount
 								append Vert_Array([vx,vy,vz]*fscale)
 								append UV_Array([tu,-tv,0])
 								append Normal_Array([nx,ny,nz])
-								append Color_Array( white)
+								append Color_Array(white)
 							)
-							else if vertexFlags[5] == 0xb6 then (		
--- 								if vertexFlags[5] == 0xb6 do ReadFixedByteString f 0x30 1 1
+							else if vertexFlags[5] == 0x12 then (
+-- 								ReadFixedByteString f 0x20 1 1
 								
 								vx = readfloat f
 								vy = readfloat f
@@ -526,15 +545,27 @@ for x=1 to 1 do (	--amgCount
 								cg = readfloat f * 255.0
 								cb = readfloat f * 255.0
 								ca = readfloat f * 255.0
-								tu = readfloat f
-								tv = readfloat f
-								f3 = readfloat f
-								null = readfloat f								
 								
 								append Vert_Array([vx,vy,vz]*fscale)
-								append UV_Array([tu,-tv,0])
--- 								append Normal_Array([0,0,0])
+								append UV_Array([0,0,0])
 								append Color_Array(color cr cg cb ca)
+							)
+							else if vertexFlags[5] == 0x99 then (
+-- 								ReadFixedByteString f 0x20 1 1
+								
+								vx = readfloat f
+								vy = readfloat f
+								vz = readfloat f
+								f1 = readfloat f
+								nx = readfloat f 
+								ny = readfloat f 
+								nz = readfloat f 
+								f2 = readfloat f 
+								
+								append Vert_Array([vx,vy,vz]*fscale)
+								append UV_Array([0,0,0])
+								append Normal_Array([nx,ny,nz])
+								append Color_Array(white)
 							)
 							else if vertexFlags[5] == 0x90 then (
 								vx = readfloat f
@@ -545,7 +576,7 @@ for x=1 to 1 do (	--amgCount
 								append Vert_Array([vx,vy,vz]*fscale)
 								append UV_Array([0,0,0])
 								append Normal_array[0,0,0]
-								append Color_Array ( white)
+								append Color_Array (white)
 							)
 							else (
 								format "unknown vertex format: % @ %\n" (bit.intashex(vertexFlags[5])) (bit.intashex(ftell f as integer))
@@ -614,7 +645,7 @@ for x=1 to 1 do (	--amgCount
 -- 			for j = 1 to Normal_Array.count do setNormal msh j Normal_Array[j]
 			for j = 1 to Color_array.count do setVertColor msh j Color_array[j]
 			
-			transformBoneId = getTransformBoneId boneDataArray boneId
+			transformBoneId = getTransformBoneId groupDataArray boneId
 			msh.parent = BNArr[transformBoneId]
 			msh.transform = msh.parent.transform
 			
@@ -664,7 +695,7 @@ for x=1 to 1 do (	--amgCount
 -- 						c.radius = 1
 -- 						c.wirecolor = green
 -- 						
--- 						transformBoneId = getTransformBoneId boneDataArray boneId
+-- 						transformBoneId = getTransformBoneId groupDataArray boneId
 -- 						b.transform *= BNArr[transformBoneId].transform
 -- 						c.transform *= BNArr[transformBoneId].transform
 						
@@ -687,7 +718,7 @@ for x=1 to 1 do (	--amgCount
 -- 						b.radius = 0.1
 -- 						b.wirecolor = red
 -- 						
--- 						transformBoneId = getTransformBoneId boneDataArray boneId
+-- 						transformBoneId = getTransformBoneId groupDataArray boneId
 -- 						b.transform *= BNArr[transformBoneId].transform
 -- 						selectmore b
 -- 						
@@ -697,11 +728,11 @@ for x=1 to 1 do (	--amgCount
 				fseek f backJump #seek_set
 			)
 		)
-		
 		fseek f matrixDataOffset #seek_set
 		if matrixDataOffset > amgOffset[x] do (
 			ReadFixedByteString f 0x40 0 0
 		)
+		
 	)
 )
 
@@ -712,7 +743,7 @@ if Weight_Array.count != 0 do (
 	skinMod = skin ()
 	addModifier Mesh_Array[1] skinMod
 	for i = 1 to BNArr.count do (
-		maxbone = getnodebyname boneNameList[i]
+		maxbone = getnodebyname boneNameArray[i]
 		if i != BNArr.count then
 			skinOps.addBone skinMod maxbone 0
 		else
@@ -730,6 +761,7 @@ if Weight_Array.count != 0 do (
 	-- 	print (skinOps.GetVertexWeight skinMod i 1)
 	)
 )
+
 Print ("Last Read @ "+((bit.intAsHex(ftell f as integer))as string))
 )
 gc()
