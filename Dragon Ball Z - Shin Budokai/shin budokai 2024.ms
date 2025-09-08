@@ -195,8 +195,6 @@ fn createCapsuleFromPoints startPoint endPoint radius =
 
 
 fname = GetOpenFileName caption:"Shin Budokai" types:"All Known Formats|*.amo;*.bin|Model (*.amo)|*.amo"
--- fname=@"C:\Users\Xavier\Desktop\New folder (4)\shin budokai 2\BC18GB00_out\BC18GB00_000.amo"
--- fname = @"C:\Users\Xavier\Desktop\New folder (4)\FULL_AFS_FILE_DUMP\BCVGTB02_out\BCVGTB02_000.amo"
 If (fname!=undefined) and ((DoesFileExist fname)==true) then (
 f = fopen fname "rb"   --open file in read only format
 FileExtension = getFileNameType  fname
