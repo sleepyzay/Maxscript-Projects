@@ -327,7 +327,7 @@ boneDataArray = #()
 for boneDataTable in boneDataTableArray do (
 	fseek f boneDataTable.boneDataOffset #seek_set
 	append boneDataArray (for x=1 to boneDataCount collect (ReadFixedByteString f 0x10 1 0 ; boneData = _boneData()))
-	format "\n"
+-- 	format "\n"
 )
 
 fseek f amgOffsetTable #seek_set
@@ -341,7 +341,9 @@ buildSkeleton boneDataTableArray boneDataTableOffset amoOffset boneNameList BNAr
 for x=1 to BNArr.count do format "% %\n" (x-1) BNArr[x].name
 
 Mesh_Array = #()
-vertOffsetReferenceArray=#()
+vertPosOffsetReferenceArray=#()
+vertNrmOffsetReferenceArray=#()
+
 Weight_Array=#()
 
 multiMat = MultiMaterial numsubs:0 showInViewport:true
@@ -381,7 +383,7 @@ for x=1 to amgCount do (	--amgCount
 	
 	for y=1 to amgBoneCount do (	--amgBoneCount
 		fseek f amgDataTableList[y].dataOffset #seek_set
-		--print y
+-- 		print y
 		--the first amgData is the main model, it has no rigid or blend weight data, it will be supplied weight data later
 		--later amgData's if contain model data will have only rigid weight data
 		--if amgData's have blend weight data there is no other data, its purpose is to supply weight data to main model
@@ -428,7 +430,7 @@ for x=1 to amgCount do (	--amgCount
 				
 				ukw0 = readshort f
 				ukw1 = readshort f						--if has physics
-				printhex ukw
+-- 				printhex ukw
 				matId = readlong f + 1
 				ukw2 = readlong f
 				ukw3 = readlong f
@@ -438,7 +440,7 @@ for x=1 to amgCount do (	--amgCount
 				
 -- 				print matID
 				
-				for a=1 to subMeshCount do (					
+				for a=1 to subMeshCount do (				
 					ReadFixedByteString f 0x10 1 0
 					nextSubMeshOffset = readlong f + modelDataOffset
 					subMeshOffset = readlong f + modelDataOffset
@@ -447,7 +449,9 @@ for x=1 to amgCount do (	--amgCount
 					vertCount = readshort f
 					faceType = readbyte f
 					ukw = readbyte f
-					
+-- 					printhere f
+-- 					printhex vertFlags
+-- 					print"\n"
 					for b=1 to vertCount do (
 						if bit.get vertFlags 2 == true do (		--texVerts
 							if bit.get vertFlags 1 == false do (	--shorts
@@ -463,7 +467,10 @@ for x=1 to amgCount do (	--amgCount
 								append UV_array([tu,1-tv,0])
 							)
 						)
-						if bit.get vertFlags 3 == true do (		--colors?
+						if bit.get vertFlags 2 == false do (
+							append UV_array([0,0,0])
+						)
+						if bit.get vertFlags 3 == true do (		--colors
 							cr = readbyte f / 255.0
 							cg = readbyte f / 255.0
 							cb = readbyte f / 255.0
@@ -472,6 +479,8 @@ for x=1 to amgCount do (	--amgCount
 							append Color_Array(color cr cg cb ca)
 						)
 						if bit.get vertFlags 7 == true do (		--normals
+							if y == 1 do append vertNrmOffsetReferenceArray (ftell f)
+							
 							nx = readfloat f
 							ny = readfloat f
 							nz = readfloat f
@@ -479,16 +488,12 @@ for x=1 to amgCount do (	--amgCount
 							append Normal_Array([nx,ny,nz])
 						)
 						if bit.get vertFlags 9 == true do (		--positions
-							vertOffset = ftell f
--- 							printhere f
+							if y == 1 do append vertPosOffsetReferenceArray (ftell f)
+							
 							vx=readfloat f 
 							vy=readfloat f
 							vz=readfloat f
-							
-							--print (vertOffset as integer)
-							
 							append Vert_Array([vx,vy,vz]*fscale)
-							if y == 1 do append vertOffsetReferenceArray vertOffset	--if main model
 						)
 					)
 					if faceType == 3 do (
@@ -548,6 +553,7 @@ for x=1 to amgCount do (	--amgCount
 			buildTVFaces msh    
 			for j = 1 to UV_array.count do setTVert msh j UV_array[j]
 			for j = 1 to Face_Array.count do setTVFace msh j Face_Array[j]
+			for j = 1 to Normal_Array.count do setNormal msh j Normal_Array[j]
 			--format "\n"
 			
 			transformBoneId = getTransformBoneId boneDataArray boneId
@@ -560,129 +566,136 @@ for x=1 to amgCount do (	--amgCount
 		fseek f blendWeightDataOffset #seek_set
 		if blendWeightDataOffset > amgOffset[x] do (
 			-- Budokai series does weighting backwards. Instead of having a list of refrences to bones and their weights per vertex, they have a list of weigths and vertices per bone
-			
-			-- for shin budokai 2 / evolution--
-			/*
- 			ReadFixedByteString f 0x10 1 0
-			weightTableCount = readlong f
-			weightTableArray = for z=1 to weightTableCount collect (readlong f + amgOffset[x])
-			
-			for z=1 to weightTableCount do (
-				fseek f weightTableArray[z] #seek_set
-				ReadFixedByteString f 0x10 1 0
+			-- each vertex has one bone influence
+			-- per bone is a list of weights and per weight is a list of vertices that has that weight as an influence
+			-- if the weight value is not 1.0 a second weight is generated at runtime?
+			-- the second influence is the bone's parent?
+			-- the second weight is generated only if the first one is under a certain value?
+			gameSelection = 2
+			if gameSelection == 1 do (
+				-- for shin budokai 1 --
 				
-				weight = readfloat f
-				vertOffsetTableCount = readlong f
-				unk = readlong f	--0x5790
-				vertOffsetTable = for a=1 to vertOffsetTableCount collect (readlong f + amgOffset[x])
-				for a=1 to vertOffsetTableCount do (
-					fseek f vertOffsetTable[a] #seek_set
-					ReadFixedByteString f 0x30 1 0
+				fseek f 0x0c #seek_cur
+				weightTableCount = readlong f
+				for z=1 to weightTableCount do (
+					--ReadFixedByteString f 0x10 1 0
 					
-					fseek f 0x1c #seek_cur
-					vertOffsetCount = readlong f
-					vertOffsetArray = for b=1 to vertOffsetCount collect (readlong f)
+					weight = readfloat f
+					weightVertCount = readlong f
+					weightVertOffset = readlong f + amgOffset[x]
+					null = readlong f
+				
+					boneId2 = (finditem BNArr BNArr[boneID].parent)
+					weight2 = 1.0 - weight
 					
-					for vertOffset in vertOffsetArray do (
-						boneId2 = (finditem BNArr BNArr[boneID].parent)
-						weight2 = 1.0 - weight
+					if weight2 < 0.5 do weight2 = 0
+					
+					format "%	%	%\n" weight weight2 amgBoneNameList[y]
+					backJump = ftell f
+					
+					fseek f weightVertOffset #seek_set
+					for i=1 to weightVertCount do (
+						--ReadFixedByteString f 0x30 1 0
+						unkFloat = readfloat f
+						unkFloat2 = readfloat f
+						unkFloat3 = readfloat f
+						unkFloat4 = readfloat f
+						unkFloat5 = readfloat f
+						unkFloat6 = readfloat f
+						unkFloat7 = readfloat f
 						
-						for j = 1 to vertOffsetReferenceArray.count do (
-							if vertOffsetReferenceArray[j] == vertOffset+amgOffset[x] do (
-								Weight_Array[j] = #(#(boneId, boneId2), #(weight, weight2))
-								--print Weight_Array[j] #nomap
-								--if boneID == 2 do print Weight_Array[j] #nomap
-							)
+	-- 					currBBMax = [unkFloat,unkFloat2,unkFloat3]*fscale
+	-- 					currBBMin = [unkFloat5,unkFloat6,unkFloat7]*fscale
+	-- 					currA = currBBMax - currBBMin
+	-- 					
+	-- 					bb = box()
+	-- 					bb.width = abs(currA[1])
+	-- 					bb.length = abs(currA[2])
+	-- 					bb.height = abs(currA[3])
+	-- 					bb.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
+	-- 					
+	-- 					format "% % % % % % %\n" unkFloat unkFloat2 unkFloat3 unkFloat4 unkFloat5 unkFloat6 unkFloat7
+						
+	-- 					b = sphere()
+	-- 					b.pos = ([unkFloat,unkFloat2,unkFloat3]*fscale) * BNArr[getTransformBoneId boneDataArray boneId].transform
+	-- 					b.wirecolor = red
+	-- 					
+	-- 					b2 = sphere()
+	-- 					b2.pos = (([unkFloat5,unkFloat6,unkFloat7]+[unkFLoat,unkFloat2,unkFloat3])*fscale) * BNArr[getTransformBoneId boneDataArray boneId].transform
+	-- 					b2.wirecolor = green
+	-- 					
+	-- 					b.radius = 1
+	-- 					b2.radius = 1
+	-- 					b.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
+	-- 					b2.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
+	-- 					
+	-- 					b2.parent = b
+	-- 					b2.showlinks = true
+	-- 					b.showlinks = true
+	-- 					
+	-- 					startPoint = b.pos
+	-- 					endPoint = b2.pos
+	-- 					radius = 1.0
+
+	-- 					createCapsuleFromPoints startPoint endPoint radius
+
+						vertOffset = readlong f 		--for main model
+						vertOffset2 = readlong f		--for cel model
+						null = readlong f
+						null2 = readlong f
+						null3 = readlong f
+						
+						for j = 1 to vertPosOffsetReferenceArray.count where vertPosOffsetReferenceArray[j] == vertOffset+amgOffset[x] do (
+							Weight_Array[j] = #(#(boneId, boneId2), #(weight, weight2))
 						)
 					)
-					
-					
-					
-					pp += vertOffsetCount
-					
-					--no alignment if last element
-					-- it imediatley continues into next vertOffsetTable
-					AlignOffset f (ftell f) 0x10
+					fseek f backJump #seek_set
 				)
 			)
-			*/
-			
-			-- for shin budokai 1 --
-			
-			fseek f 0x0c #seek_cur
-			weightTableCount = readlong f
-			for z=1 to weightTableCount do (
-				--ReadFixedByteString f 0x10 1 0
+			if gameSelection == 2 do (
+				-- for shin budokai 2 / evolution--
 				
-				weight = readfloat f
-				weightVertCount = readlong f
-				weightVertOffset = readlong f + amgOffset[x]
-				null = readlong f
+				ReadFixedByteString f 0x10 1 0
+				weightTableCount = readlong f
+				weightTableArray = for z=1 to weightTableCount collect (readlong f + amgOffset[x])
 				
-				boneId2 = (finditem BNArr BNArr[boneID].parent)
-				weight2 = 1.0 - weight
-				
-				backJump = ftell f
-				
-				fseek f weightVertOffset #seek_set
-				for i=1 to weightVertCount do (
-					--ReadFixedByteString f 0x30 1 0
-					unkFloat = readfloat f
-					unkFloat2 = readfloat f
-					unkFloat3 = readfloat f
-					unkFloat4 = readfloat f
-					unkFloat5 = readfloat f
-					unkFloat6 = readfloat f
-					unkFloat7 = readfloat f
+				for z=1 to weightTableCount do (
+					fseek f weightTableArray[z] #seek_set
+					ReadFixedByteString f 0x10 1 0
 					
--- 					currBBMax = [unkFloat,unkFloat2,unkFloat3]*fscale
--- 					currBBMin = [unkFloat5,unkFloat6,unkFloat7]*fscale
--- 					currA = currBBMax - currBBMin
--- 					
--- 					bb = box()
--- 					bb.width = abs(currA[1])
--- 					bb.length = abs(currA[2])
--- 					bb.height = abs(currA[3])
--- 					bb.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
--- 					
--- 					format "% % % % % % %\n" unkFloat unkFloat2 unkFloat3 unkFloat4 unkFloat5 unkFloat6 unkFloat7
-					
--- 					b = sphere()
--- 					b.pos = ([unkFloat,unkFloat2,unkFloat3]*fscale) * BNArr[getTransformBoneId boneDataArray boneId].transform
--- 					b.wirecolor = red
--- 					
--- 					b2 = sphere()
--- 					b2.pos = (([unkFloat5,unkFloat6,unkFloat7]+[unkFLoat,unkFloat2,unkFloat3])*fscale) * BNArr[getTransformBoneId boneDataArray boneId].transform
--- 					b2.wirecolor = green
--- 					
--- 					b.radius = 1
--- 					b2.radius = 1
--- 					b.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
--- 					b2.transform *= BNArr[getTransformBoneId boneDataArray boneId].transform
--- 					
--- 					b2.parent = b
--- 					b2.showlinks = true
--- 					b.showlinks = true
--- 					
--- 					startPoint = b.pos
--- 					endPoint = b2.pos
--- 					radius = 1.0
-
--- 					createCapsuleFromPoints startPoint endPoint radius
-
-					vertOffset = readlong f 		--for main model
-					vertOffset2 = readlong f		--for cel model
-					null = readlong f
-					null2 = readlong f
-					null3 = readlong f
-					
-					for j = 1 to vertOffsetReferenceArray.count where vertOffsetReferenceArray[j] == vertOffset+amgOffset[x] do (
-						Weight_Array[j] = #(#(boneId, boneId2), #(weight, weight2))
+					weight = readfloat f
+					vertOffsetTableCount = readlong f
+					unk = readlong f	--pointer?
+					vertOffsetTable = for a=1 to vertOffsetTableCount collect (readlong f + amgOffset[x])
+					for a=1 to vertOffsetTableCount do (
+						fseek f vertOffsetTable[a] #seek_set
+						ReadFixedByteString f 0x30 1 0
+						
+						fseek f 0x1c #seek_cur
+						vertOffsetCount = readlong f
+						vertOffsetArray = for b=1 to vertOffsetCount collect (readlong f)
+						
+						for vertOffset in vertOffsetArray do (
+							boneId2 = (finditem BNArr BNArr[boneID].parent)
+							weight2 = 1.0 - weight
+							
+							nrmOffsetIndex = finditem vertPosOffsetReferenceArray (vertOffset+amgOffset[x])
+							posOffsetIndex = finditem vertNrmOffsetReferenceArray (vertOffset+amgOffset[x])
+							vertexIndex = if nrmOffsetIndex != 0 then nrmOffsetIndex else posOffsetIndex
+							
+							Weight_Array[vertexIndex] = #(#(boneId, boneId2), #(weight, weight2))
+						)
+						
+						pp += vertOffsetCount
+						
+						--no alignment if last element
+						-- it imediatley continues into next vertOffsetTable
+						AlignOffset f (ftell f) 0x10
 					)
+-- 					format "\n"
 				)
-				fseek f backJump #seek_set
+-- 				format "\n"
 			)
-			
 		)
 		/*
 		fseek f rigidWeightDataOffset #seek_set
@@ -714,8 +727,9 @@ for x=1 to amgCount do (	--amgCount
 	--print pp
 )
 
-print vertOffsetReferenceArray.count
+-- print vertOffsetReferenceArray.count
 
+printhex Weight_Array.count
 if Weight_Array.count != 0 do (
 	-- Applying Skinning --
 	max modify mode
